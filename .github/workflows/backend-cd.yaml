@@ -1,0 +1,39 @@
+name: Backend Continuous Deployment
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy Backend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name cluster \
+            --region us-east-1
+
+      - name: Deploy backend
+        run: |
+          kubectl apply -k starter/backend/k8s
+
+      - name: Update backend image
+        run: |
+          kubectl set image deployment/backend \
+            backend=268145795447.dkr.ecr.us-east-1.amazonaws.com/backend:latest
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/backend
