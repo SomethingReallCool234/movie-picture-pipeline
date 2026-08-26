@@ -87,12 +87,12 @@ jobs:
         working-directory: starter/backend
         run: |
           docker build \
-            --tag ${{ steps.login-ecr.outputs.registry }}/backend:latest \
+            --tag ${{ steps.login-ecr.outputs.registry }}/backend:${{ github.sha }} \
             .
 
       - name: Push Docker image
         run: |
-          docker push ${{ steps.login-ecr.outputs.registry }}/backend:latest
+          docker push ${{ steps.login-ecr.outputs.registry }}/backend:${{ github.sha }}
 
   deploy:
     name: Deploy Backend
@@ -125,7 +125,7 @@ jobs:
       - name: Update backend image
         run: |
           kubectl set image deployment/backend \
-            backend=268145795447.dkr.ecr.us-east-1.amazonaws.com/backend:latest
+            backend=268145795447.dkr.ecr.us-east-1.amazonaws.com/backend:${{ github.sha }}
 
       - name: Verify deployment
         run: |

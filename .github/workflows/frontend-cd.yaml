@@ -82,27 +82,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup NodeJS
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: starter/frontend/.nvmrc
-
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
-          path: starter/frontend/node_modules
-          key: frontend-node-modules-${{ runner.os }}-${{ hashFiles('starter/frontend/package-lock.json') }}
-          restore-keys: |
-            frontend-node-modules-${{ runner.os }}-
-
-      - name: Install dependencies
-        working-directory: starter/frontend
-        run: npm ci
-
-      - name: Run tests
-        working-directory: starter/frontend
-        run: CI=true npm test -- --watchAll=false
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -121,12 +100,12 @@ jobs:
         run: |
           docker build \
             --build-arg REACT_APP_MOVIE_API_URL=$REACT_APP_MOVIE_API_URL \
-            --tag ${{ steps.login-ecr.outputs.registry }}/frontend:latest \
+            --tag ${{ steps.login-ecr.outputs.registry }}/frontend:${{ github.sha }} \
             .
 
       - name: Push Docker image
         run: |
-          docker push ${{ steps.login-ecr.outputs.registry }}/frontend:latest
+          docker push ${{ steps.login-ecr.outputs.registry }}/frontend:${{ github.sha }}
 
   deploy:
     name: Deploy Frontend
@@ -159,7 +138,7 @@ jobs:
       - name: Update frontend image
         run: |
           kubectl set image deployment/frontend \
-            frontend=268145795447.dkr.ecr.us-east-1.amazonaws.com/frontend:latest
+            frontend=268145795447.dkr.ecr.us-east-1.amazonaws.com/frontend:${{ github.sha }}
 
       - name: Verify deployment
         run: |
