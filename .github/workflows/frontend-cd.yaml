@@ -159,7 +159,7 @@ jobs:
       - name: Update frontend image
         run: |
           kubectl set image deployment/frontend \
-            frontend=2681457955447.dkr.ecr.us-east-1.amazonaws.com/frontend:latest
+            frontend=268145795447.dkr.ecr.us-east-1.amazonaws.com/frontend:latest
 
       - name: Verify deployment
         run: |
