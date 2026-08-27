@@ -4,12 +4,11 @@ on:
   push:
     branches:
       - main
-
   workflow_dispatch:
 
 jobs:
   lint:
-    name: Lint
+    name: Lint Backend
     runs-on: ubuntu-latest
 
     defaults:
@@ -20,22 +19,29 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Setup NodeJS
+        uses: actions/setup-node@v4
         with:
-          python-version: "3.10"
+          node-version: 18
+          cache: npm
+          cache-dependency-path: starter/backend/package-lock.json
 
-      - name: Install Pipenv
-        run: pip install pipenv
+      - name: Restore npm cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('starter/backend/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
 
       - name: Install dependencies
-        run: pipenv install --dev
+        run: npm ci
 
       - name: Run lint
-        run: pipenv run lint
+        run: npm run lint
 
   test:
-    name: Test
+    name: Test Backend
     runs-on: ubuntu-latest
 
     defaults:
@@ -46,24 +52,30 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Setup NodeJS
+        uses: actions/setup-node@v4
         with:
-          python-version: "3.10"
+          node-version: 18
+          cache: npm
+          cache-dependency-path: starter/backend/package-lock.json
 
-      - name: Install Pipenv
-        run: pip install pipenv
+      - name: Restore npm cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('starter/backend/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
 
       - name: Install dependencies
-        run: pipenv install --dev
+        run: npm ci
 
       - name: Run tests
-        run: pipenv run test
+        run: npm test -- --watchAll=false
 
-  build:
-    name: Build and Push
+  build-and-deploy:
+    name: Build Push and Deploy Backend
     runs-on: ubuntu-latest
-
     needs:
       - lint
       - test
@@ -87,36 +99,19 @@ jobs:
         working-directory: starter/backend
         run: |
           docker build \
-            --tag ${{ steps.login-ecr.outputs.registry }}/backend:${{ github.sha }} \
+            -t ${{ steps.login-ecr.outputs.registry }}/backend:${{ github.sha }} \
             .
 
       - name: Push Docker image
         run: |
-          docker push ${{ steps.login-ecr.outputs.registry }}/backend:${{ github.sha }}
+          docker push \
+            ${{ steps.login-ecr.outputs.registry }}/backend:${{ github.sha }}
 
-  deploy:
-    name: Deploy Backend
-    runs-on: ubuntu-latest
-
-    needs:
-      - build
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
-      - name: Update kubeconfig
+      - name: Configure kubectl
         run: |
           aws eks update-kubeconfig \
-            --name cluster \
-            --region us-east-1
+            --region us-east-1 \
+            --name cluster
 
       - name: Deploy backend
         run: |
@@ -125,8 +120,14 @@ jobs:
       - name: Update backend image
         run: |
           kubectl set image deployment/backend \
-            backend=268145795447.dkr.ecr.us-east-1.amazonaws.com/backend:${{ github.sha }}
+            backend=${{ steps.login-ecr.outputs.registry }}/backend:${{ github.sha }}
 
-      - name: Verify deployment
+      - name: Wait for backend rollout
         run: |
-          kubectl rollout status deployment/backend
+          kubectl rollout status deployment/backend --timeout=180s
+
+      - name: Verify backend deployment
+        run: |
+          kubectl get deployment backend
+          kubectl get pods
+          kubectl get svc backend
