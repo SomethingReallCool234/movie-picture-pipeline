@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "starter/frontend/**"
+      - ".github/workflows/frontend-cd.yml"
+
   workflow_dispatch:
 
 jobs:
@@ -19,20 +23,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup NodeJS
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: npm
           cache-dependency-path: starter/frontend/package-lock.json
-
-      - name: Restore npm cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-node-${{ hashFiles('starter/frontend/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
 
       - name: Install dependencies
         run: npm ci
@@ -52,30 +48,23 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup NodeJS
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: npm
           cache-dependency-path: starter/frontend/package-lock.json
 
-      - name: Restore npm cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-node-${{ hashFiles('starter/frontend/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
-
       - name: Install dependencies
         run: npm ci
 
       - name: Run tests
-        run: npm test -- --watchAll=false
+        run: CI=true npm test
 
-  build-and-deploy:
-    name: Build Push and Deploy Frontend
+  build:
+    name: Build and Push Frontend
     runs-on: ubuntu-latest
+
     needs:
       - lint
       - test
@@ -97,58 +86,95 @@ jobs:
             --region us-east-1 \
             --name cluster
 
+      - name: Verify EKS access
+        run: |
+          kubectl get nodes
+
       - name: Get backend LoadBalancer URL
-        id: backend-url
+        id: backend
         run: |
           echo "Waiting for backend LoadBalancer..."
 
           for i in {1..30}; do
-            BACKEND_URL=$(kubectl get svc backend \
-              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+            BACKEND_HOST=$(kubectl get service backend \
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' \
+              2>/dev/null || true)
 
-            if [ -n "$BACKEND_URL" ]; then
-              echo "Backend URL: http://$BACKEND_URL"
-              echo "url=http://$BACKEND_URL" >> "$GITHUB_OUTPUT"
+            if [ -n "$BACKEND_HOST" ]; then
+              BACKEND_URL="http://${BACKEND_HOST}"
+              echo "Backend URL: ${BACKEND_URL}"
+              echo "url=${BACKEND_URL}" >> "$GITHUB_OUTPUT"
               exit 0
             fi
 
+            echo "Backend LoadBalancer is not ready. Attempt $i/30"
             sleep 10
           done
 
-          echo "Backend LoadBalancer URL was not available"
+          echo "Backend LoadBalancer was not available."
           exit 1
 
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build Docker image
+      - name: Build frontend image
         working-directory: starter/frontend
         run: |
           docker build \
-            --build-arg REACT_APP_MOVIE_API_URL=${{ steps.backend-url.outputs.url }} \
-            -t ${{ steps.login-ecr.outputs.registry }}/frontend:${{ github.sha }} \
+            --build-arg REACT_APP_MOVIE_API_URL=${{ steps.backend.outputs.url }} \
+            --tag ${{ steps.login-ecr.outputs.registry }}/frontend:${{ github.sha }} \
             .
 
-      - name: Push Docker image
+      - name: Push frontend image
         run: |
           docker push \
             ${{ steps.login-ecr.outputs.registry }}/frontend:${{ github.sha }}
 
-      - name: Deploy frontend
-        run: |
-          kubectl apply -k starter/frontend/k8s
+  deploy:
+    name: Deploy Frontend
+    runs-on: ubuntu-latest
 
-      - name: Update frontend image
+    needs:
+      - build
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Configure kubectl
         run: |
-          kubectl set image deployment/frontend \
-            frontend=${{ steps.login-ecr.outputs.registry }}/frontend:${{ github.sha }}
+          aws eks update-kubeconfig \
+            --region us-east-1 \
+            --name cluster
+
+      - name: Verify EKS access
+        run: |
+          kubectl get nodes
+
+      - name: Set frontend image
+        working-directory: starter/frontend/k8s
+        run: |
+          kustomize edit set image \
+            frontend=268145795447.dkr.ecr.us-east-1.amazonaws.com/frontend:${{ github.sha }}
+
+      - name: Deploy frontend
+        working-directory: starter/frontend/k8s
+        run: |
+          kustomize build | kubectl apply -f -
 
       - name: Wait for frontend rollout
         run: |
           kubectl rollout status deployment/frontend --timeout=180s
 
-      - name: Verify frontend deployment
+      - name: Verify frontend
         run: |
           kubectl get deployment frontend
           kubectl get pods

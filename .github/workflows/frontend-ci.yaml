@@ -4,6 +4,10 @@ on:
   pull_request:
     branches:
       - main
+    paths:
+      - "starter/frontend/**"
+      - ".github/workflows/frontend-ci.yml"
+
   workflow_dispatch:
 
 jobs:
@@ -19,20 +23,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup NodeJS
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: npm
           cache-dependency-path: starter/frontend/package-lock.json
-
-      - name: Restore npm cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-node-${{ hashFiles('starter/frontend/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
 
       - name: Install dependencies
         run: npm ci
@@ -52,30 +48,23 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup NodeJS
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: npm
           cache-dependency-path: starter/frontend/package-lock.json
 
-      - name: Restore npm cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-node-${{ hashFiles('starter/frontend/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
-
       - name: Install dependencies
         run: npm ci
 
       - name: Run tests
-        run: npm test -- --watchAll=false
+        run: CI=true npm test
 
   build:
-    name: Build Frontend Docker Image
+    name: Build Frontend
     runs-on: ubuntu-latest
+
     needs:
       - lint
       - test
@@ -88,29 +77,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup NodeJS
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
-          cache: npm
-          cache-dependency-path: starter/frontend/package-lock.json
-
-      - name: Restore npm cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-node-${{ hashFiles('starter/frontend/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run tests
-        run: npm test -- --watchAll=false
-
       - name: Build Docker image
         run: |
           docker build \
             --build-arg REACT_APP_MOVIE_API_URL=http://localhost:5000 \
-            -t mp-frontend:ci .
+            --tag mp-frontend:${{ github.sha }} \
+            .
